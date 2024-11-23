@@ -3,8 +3,6 @@ from rest_framework.decorators import api_view
 
 import requests
 
-from .azure_translate_service import AzureTranslateService
-
 key=''
 
 endpoint_text='https://api.cognitive.microsofttranslator.com'
