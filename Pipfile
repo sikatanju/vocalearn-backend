@@ -8,6 +8,8 @@ django = "*"
 djangorestframework = "*"
 django-cors-headers = "*"
 azure-ai-translation-text = "*"
+azure-cognitiveservices-speech = "*"
+pydub = "*"
 
 [dev-packages]
 
