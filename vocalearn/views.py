@@ -3,6 +3,8 @@ from rest_framework.decorators import api_view
 from rest_framework import status
 from django.conf import settings
 
+from pydub import AudioSegment
+
 from azure.cognitiveservices.speech import SpeechConfig, AudioConfig, SpeechRecognizer, ResultReason
 
 import requests
@@ -108,6 +110,40 @@ def speech_to_text_view(request):
         logger.info(cleanup_result)
         return Response({"error": f"Error during speech recognition: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
+@api_view(['POST'])
+def recorded_audio(request):
+    audio_file = request.FILES.get("audio")
+
+    if not audio_file:
+        return Response({"error": "No audio file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        audio_files_directory = os.path.join(settings.MEDIA_ROOT, 'audio')
+        os.makedirs(audio_files_directory, exist_ok=True) 
+
+        audio_file_path = os.path.join(audio_files_directory, audio_file.name)
+
+        # Save the original file
+        with open(audio_file_path, "wb") as f:
+            for chunk in audio_file.chunks():
+                f.write(chunk)
+
+        
+        processed_audio_path = os.path.join(audio_files_directory, "processed_" + audio_file.name)
+        audio = AudioSegment.from_file(audio_file_path)
+        audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+        audio.export(processed_audio_path, format="wav")        
+        logger.debug(f"Processed audio saved at: {processed_audio_path}")
+
+        # Optionally, remove the original file
+        os.remove(audio_file_path)
+
+        return Response({"status": "success", "processed_audio_path": processed_audio_path})
+
+    except Exception as e:
+        logger.error(f"Error processing the audio file: {e}", exc_info=True)
+        return Response({"error": f"Error processing the audio file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 def cleanup_audio_files(directory):
     try:
