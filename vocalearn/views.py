@@ -134,16 +134,35 @@ def recorded_audio(request):
         audio = AudioSegment.from_file(audio_file_path)
         audio = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
         audio.export(processed_audio_path, format="wav")        
-        logger.debug(f"Processed audio saved at: {processed_audio_path}")
+        # logger.debug(f"Processed audio saved at: {processed_audio_path}")
 
-        # Optionally, remove the original file
-        os.remove(audio_file_path)
+        speech_config = SpeechConfig(subscription=speech_services_key, region=region)
+        audio_config = AudioConfig(filename=processed_audio_path)
+        recognizer = SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
 
-        return Response({"status": "success", "processed_audio_path": processed_audio_path})
+
+        result = recognizer.recognize_once()
+        print(result)
+        if result.reason == ResultReason.RecognizedSpeech:
+            transcription = result.text
+            cleanup_result = cleanup_audio_files(audio_files_directory)
+            logger.info(cleanup_result)
+            return Response({"status": "success", "transcription": transcription})
+        elif result.reason == ResultReason.NoMatch:
+            cleanup_result = cleanup_audio_files(audio_files_directory)
+            logger.info(cleanup_result)
+            return Response({"error": "No speech could be recognized."}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            cleanup_result = cleanup_audio_files(audio_files_directory)
+            logger.info(cleanup_result)
+            return Response({"error": f"Speech recognition failed: {result.reason}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     except Exception as e:
         logger.error(f"Error processing the audio file: {e}", exc_info=True)
         return Response({"error": f"Error processing the audio file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    
+
 
 def cleanup_audio_files(directory):
     try:
