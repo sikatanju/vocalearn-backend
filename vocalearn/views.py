@@ -10,7 +10,7 @@ from azure.cognitiveservices.speech import SpeechConfig, AudioConfig, SpeechReco
 import azure.cognitiveservices.speech as speechsdk
 
 import requests
-import os, shutil, logging, time
+import os, shutil, logging, time, string
 
 speech_services_endpoint = 'https://southeastasia.api.cognitive.microsoft.com/'
 speech_services_key = ''
@@ -105,6 +105,7 @@ def get_transcribed_text(audio_file, audio_file_path, audio_files_directory, tar
         logger.error(f"Error processing the audio file: {e}", exc_info=True)
         return Response({"error": f"Error processing the audio file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+
 def get_continuous_transcription(audio_file, audio_file_path, audio_files_directory, target_language):
     try:
         speech_config = speechsdk.SpeechConfig(
@@ -150,6 +151,148 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
     except Exception as e:
         logger.error(f"Error during continuous recognition: {e}", exc_info=True)
         return Response({"error": f"Error during continuous recognition: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+def pronunciation_assesment_view(request):
+    import difflib
+    import json
+    audio_file = request.FILES.get('audio')
+    os.makedirs(audio_files_directory, exist_ok=True) 
+    audio_file_path = os.path.join(audio_files_directory, audio_file.name)
+
+    speech_config = speechsdk.SpeechConfig(subscription=speech_services_key, region=speech_services_region)
+    audio_config = speechsdk.audio.AudioConfig(filename=get_processed_audio_file_path(audio_file, audio_file_path, audio_files_directory))
+
+    reference_text = request.data.get('reference_text')
+    enable_miscue = True
+    enable_prosody_assessment = True
+    
+    pronunciation_config = speechsdk.PronunciationAssessmentConfig(
+        reference_text=reference_text,
+        grading_system=speechsdk.PronunciationAssessmentGradingSystem.HundredMark,
+        granularity=speechsdk.PronunciationAssessmentGranularity.Phoneme,
+        enable_miscue=enable_miscue)
+    
+    if enable_prosody_assessment:
+        pronunciation_config.enable_prosody_assessment()
+    
+    target_language = request.data.get('target_language')
+    speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, language=target_language, audio_config=audio_config)
+    pronunciation_config.apply_to(speech_recognizer)
+
+    done = False
+    recognized_words = []
+    prosody_scores = []
+    fluency_scores = []
+    durations = []
+
+    def stop_cb(evt: speechsdk.SessionEventArgs):
+        """callback that signals to stop continuous recognition upon receiving an event `evt`"""
+        print('CLOSING on {}'.format(evt))
+        nonlocal done
+        done = True
+
+    def recognized(evt: speechsdk.SpeechRecognitionEventArgs):
+        # print("pronunciation assessment for: {}".format(evt.result.text))
+        pronunciation_result = speechsdk.PronunciationAssessmentResult(evt.result)
+        # print("    Accuracy score: {}, prosody score: {}, pronunciation score: {}, completeness score : {}, fluency score: {}".format(
+        #     pronunciation_result.accuracy_score, pronunciation_result.prosody_score, pronunciation_result.pronunciation_score,
+        #     pronunciation_result.completeness_score, pronunciation_result.fluency_score
+        # ))
+        nonlocal recognized_words, prosody_scores, fluency_scores, durations
+        recognized_words += pronunciation_result.words
+        fluency_scores.append(pronunciation_result.fluency_score)
+        if pronunciation_result.prosody_score is not None:
+            prosody_scores.append(pronunciation_result.prosody_score)
+        json_result = evt.result.properties.get(speechsdk.PropertyId.SpeechServiceResponse_JsonResult)
+        jo = json.loads(json_result)
+        nb = jo["NBest"][0]
+        durations.append(sum([int(w["Duration"]) for w in nb["Words"]]))
+
+    # Connect callbacks to the events fired by the speech recognizer
+    speech_recognizer.recognized.connect(recognized)
+    speech_recognizer.session_started.connect(lambda evt: print('SESSION STARTED: {}'.format(evt)))
+    speech_recognizer.session_stopped.connect(lambda evt: print('SESSION STOPPED {}'.format(evt)))
+    speech_recognizer.canceled.connect(lambda evt: print('CANCELED {}'.format(evt)))
+    # Stop continuous recognition on either session stopped or canceled events
+    speech_recognizer.session_stopped.connect(stop_cb)
+    speech_recognizer.canceled.connect(stop_cb)
+
+    # Start continuous pronunciation assessment
+    speech_recognizer.start_continuous_recognition()
+    while not done:
+        time.sleep(.5)
+
+    # if language == 'zh-CN':
+    #     # Use jieba package to split words for Chinese
+    #     import jieba
+    #     import zhon.hanzi
+    #     jieba.suggest_freq([x.word for x in recognized_words], True)
+    #     reference_words = [w for w in jieba.cut(reference_text) if w not in zhon.hanzi.punctuation]
+    # else:
+    reference_words = [w.strip(string.punctuation) for w in reference_text.lower().split()]
+    if enable_miscue:
+        diff = difflib.SequenceMatcher(None, reference_words, [x.word.lower() for x in recognized_words])
+        final_words = []
+        for tag, i1, i2, j1, j2 in diff.get_opcodes():
+            if tag in ['insert', 'replace']:
+                for word in recognized_words[j1:j2]:
+                    if word.error_type == 'None':
+                        word._error_type = 'Insertion'
+                    final_words.append(word)
+            if tag in ['delete', 'replace']:
+                for word_text in reference_words[i1:i2]:
+                    word = speechsdk.PronunciationAssessmentWordResult({
+                        'Word': word_text,
+                        'PronunciationAssessment': {
+                            'ErrorType': 'Omission',
+                        }
+                    })
+                    final_words.append(word)
+            if tag == 'equal':
+                final_words += recognized_words[j1:j2]
+    else:
+        final_words = recognized_words
+
+    final_accuracy_scores = []
+    for word in final_words:
+        if word.error_type == 'Insertion':
+            continue
+        else:
+            final_accuracy_scores.append(word.accuracy_score)
+
+    accuracy_score = sum(final_accuracy_scores) / len(final_accuracy_scores)
+    
+    
+    if len(prosody_scores) == 0:
+        prosody_score = float("nan")
+    else:
+        prosody_score = sum(prosody_scores) / len(prosody_scores)
+    
+    fluency_score = sum([x * y for (x, y) in zip(fluency_scores, durations)]) / sum(durations)
+    
+    completeness_score = len([w for w in recognized_words if w.error_type == "None"]) / len(reference_words) * 100
+    completeness_score = completeness_score if completeness_score <= 100 else 100
+
+    # print('    Paragraph accuracy score: {}, prosody score: {}, completeness score: {}, fluency score: {}'.format(
+    #     accuracy_score, prosody_score, completeness_score, fluency_score
+    # ))
+
+    # for idx, word in enumerate(final_words):
+    #     print('    {}: word: {}\taccuracy score: {}\terror type: {};'.format(
+    #         idx + 1, word.word, word.accuracy_score, word.error_type
+    #     ))
+
+    speech_recognizer.stop_continuous_recognition()
+    print(reference_text)
+
+    if not audio_file or not target_language or not reference_text:
+        return Response({"error": "Something is missing"}, status=status.HTTP_400_BAD_REQUEST)
+    else:
+        return Response({"status": "success", "accuracyScore": accuracy_score, "prosodyScore": prosody_score,
+                          "completenessScore": completeness_score, "fluency_score": fluency_score}, status=status.HTTP_200_OK)
+    
 
 
 def get_processed_audio_file_path(audio_file, audio_file_path, audio_files_directory):

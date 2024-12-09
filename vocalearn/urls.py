@@ -7,6 +7,7 @@ from . import views
 urlpatterns = [
     path("translate/", views.translate_text_view, name='translate_text'),
     path("speech/", views.speech_to_text_view, name="speech-to-text"),
+    path('pronunciation/', views.pronunciation_assesment_view, name='pronunciation-assesment'),
 ]
 
 if settings.DEBUG:
