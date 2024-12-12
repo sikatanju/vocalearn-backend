@@ -13,10 +13,10 @@ import requests
 import os, shutil, logging, time, string
 
 speech_services_endpoint = 'https://southeastasia.api.cognitive.microsoft.com/'
-speech_services_key = 'CCXx6FVo79BOPpGjQLW1NMjQciMlhrvrwi1LPQvDBUiAuWH8aVl1JQQJ99ALACqBBLyXJ3w3AAAYACOGsGq1'
+speech_services_key = ''
 speech_services_region = 'southeastasia'
 
-text_api_key='44KaEWLDY33cdt4pS58fPpYBl9o1B735t0EPuvmHphKewHfHWg6xJQQJ99ALACULyCpXJ3w3AAAbACOGBUL2'
+text_api_key=''
 endpoint_text='https://api.cognitive.microsofttranslator.com'
 endpoint_document='https://vocalearn-translator.cognitiveservices.azure.com'
 
