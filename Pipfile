@@ -11,6 +11,8 @@ azure-ai-translation-text = "*"
 azure-cognitiveservices-speech = "*"
 pydub = "*"
 ffmpeg-python = "*"
+jieba = "*"
+zhon = "*"
 
 [dev-packages]
 

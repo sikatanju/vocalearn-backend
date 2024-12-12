@@ -13,10 +13,10 @@ import requests
 import os, shutil, logging, time, string
 
 speech_services_endpoint = 'https://southeastasia.api.cognitive.microsoft.com/'
-speech_services_key = ''
+speech_services_key = 'CCXx6FVo79BOPpGjQLW1NMjQciMlhrvrwi1LPQvDBUiAuWH8aVl1JQQJ99ALACqBBLyXJ3w3AAAYACOGsGq1'
 speech_services_region = 'southeastasia'
 
-text_api_key=''
+text_api_key='44KaEWLDY33cdt4pS58fPpYBl9o1B735t0EPuvmHphKewHfHWg6xJQQJ99ALACULyCpXJ3w3AAAbACOGBUL2'
 endpoint_text='https://api.cognitive.microsofttranslator.com'
 endpoint_document='https://vocalearn-translator.cognitiveservices.azure.com'
 
@@ -200,11 +200,16 @@ def pronunciation_assesment_view(request):
         #     pronunciation_result.accuracy_score, pronunciation_result.prosody_score, pronunciation_result.pronunciation_score,
         #     pronunciation_result.completeness_score, pronunciation_result.fluency_score
         # ))
+        
         nonlocal recognized_words, prosody_scores, fluency_scores, durations
+        
         recognized_words += pronunciation_result.words
+        
         fluency_scores.append(pronunciation_result.fluency_score)
+        
         if pronunciation_result.prosody_score is not None:
             prosody_scores.append(pronunciation_result.prosody_score)
+
         json_result = evt.result.properties.get(speechsdk.PropertyId.SpeechServiceResponse_JsonResult)
         jo = json.loads(json_result)
         nb = jo["NBest"][0]
@@ -224,14 +229,14 @@ def pronunciation_assesment_view(request):
     while not done:
         time.sleep(.5)
 
-    # if language == 'zh-CN':
-    #     # Use jieba package to split words for Chinese
-    #     import jieba
-    #     import zhon.hanzi
-    #     jieba.suggest_freq([x.word for x in recognized_words], True)
-    #     reference_words = [w for w in jieba.cut(reference_text) if w not in zhon.hanzi.punctuation]
-    # else:
-    reference_words = [w.strip(string.punctuation) for w in reference_text.lower().split()]
+    if target_language == 'zh-CN':
+        import jieba
+        import zhon.hanzi
+        jieba.suggest_freq([x.word for x in recognized_words], True)
+        reference_words = [w for w in jieba.cut(reference_text) if w not in zhon.hanzi.punctuation]
+    else:
+        reference_words = [w.strip(string.punctuation) for w in reference_text.lower().split()]
+
     if enable_miscue:
         diff = difflib.SequenceMatcher(None, reference_words, [x.word.lower() for x in recognized_words])
         final_words = []
@@ -266,7 +271,7 @@ def pronunciation_assesment_view(request):
     
     
     if len(prosody_scores) == 0:
-        prosody_score = float("nan")
+        prosody_score = "nan"
     else:
         prosody_score = sum(prosody_scores) / len(prosody_scores)
     
@@ -274,16 +279,6 @@ def pronunciation_assesment_view(request):
     
     completeness_score = len([w for w in recognized_words if w.error_type == "None"]) / len(reference_words) * 100
     completeness_score = completeness_score if completeness_score <= 100 else 100
-
-    # print('    Paragraph accuracy score: {}, prosody score: {}, completeness score: {}, fluency score: {}'.format(
-    #     accuracy_score, prosody_score, completeness_score, fluency_score
-    # ))
-
-    # for idx, word in enumerate(final_words):
-    #     print('    {}: word: {}\taccuracy score: {}\terror type: {};'.format(
-    #         idx + 1, word.word, word.accuracy_score, word.error_type
-    #     ))
-
     speech_recognizer.stop_continuous_recognition()
     print(reference_text)
 
