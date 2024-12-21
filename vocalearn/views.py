@@ -6,7 +6,6 @@ from django.conf import settings
 from pydub import AudioSegment
 
 from azure.cognitiveservices.speech import SpeechConfig, AudioConfig, SpeechRecognizer, ResultReason
-# from azure.cognitiveservices.speech.audio import AudioInputStream
 import azure.cognitiveservices.speech as speechsdk
 
 import requests
@@ -77,7 +76,6 @@ def speech_to_text_view(request):
     os.makedirs(audio_files_directory, exist_ok=True) 
     audio_file_path = os.path.join(audio_files_directory, audio_file.name)
 
-    # return get_transcribed_text(audio_file, audio_file_path, audio_files_directory, target_language)
     return get_continuous_transcription(audio_file, audio_file_path, audio_files_directory, target_language)
     
     
@@ -194,19 +192,10 @@ def pronunciation_assesment_view(request):
         done = True
 
     def recognized(evt: speechsdk.SpeechRecognitionEventArgs):
-        # print("pronunciation assessment for: {}".format(evt.result.text))
         pronunciation_result = speechsdk.PronunciationAssessmentResult(evt.result)
-        # print("    Accuracy score: {}, prosody score: {}, pronunciation score: {}, completeness score : {}, fluency score: {}".format(
-        #     pronunciation_result.accuracy_score, pronunciation_result.prosody_score, pronunciation_result.pronunciation_score,
-        #     pronunciation_result.completeness_score, pronunciation_result.fluency_score
-        # ))
-        
         nonlocal recognized_words, prosody_scores, fluency_scores, durations
-        
         recognized_words += pronunciation_result.words
-        
         fluency_scores.append(pronunciation_result.fluency_score)
-        
         if pronunciation_result.prosody_score is not None:
             prosody_scores.append(pronunciation_result.prosody_score)
 
@@ -220,11 +209,9 @@ def pronunciation_assesment_view(request):
     speech_recognizer.session_started.connect(lambda evt: print('SESSION STARTED: {}'.format(evt)))
     speech_recognizer.session_stopped.connect(lambda evt: print('SESSION STOPPED {}'.format(evt)))
     speech_recognizer.canceled.connect(lambda evt: print('CANCELED {}'.format(evt)))
-    # Stop continuous recognition on either session stopped or canceled events
     speech_recognizer.session_stopped.connect(stop_cb)
     speech_recognizer.canceled.connect(stop_cb)
 
-    # Start continuous pronunciation assessment
     speech_recognizer.start_continuous_recognition()
     while not done:
         time.sleep(.5)
@@ -280,7 +267,6 @@ def pronunciation_assesment_view(request):
     completeness_score = len([w for w in recognized_words if w.error_type == "None"]) / len(reference_words) * 100
     completeness_score = completeness_score if completeness_score <= 100 else 100
     speech_recognizer.stop_continuous_recognition()
-    print(reference_text)
 
     if not audio_file or not target_language or not reference_text:
         return Response({"error": "Something is missing"}, status=status.HTTP_400_BAD_REQUEST)
