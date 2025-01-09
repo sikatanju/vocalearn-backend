@@ -8,7 +8,7 @@ from pydub import AudioSegment
 from azure.cognitiveservices.speech import SpeechConfig, AudioConfig, SpeechRecognizer, ResultReason
 import azure.cognitiveservices.speech as speechsdk
 
-import requests
+import requests, json, difflib
 import os, shutil, logging, time, string
 
 speech_services_endpoint = 'https://southeastasia.api.cognitive.microsoft.com/'
@@ -27,6 +27,7 @@ audio_files_directory = os.path.join(settings.MEDIA_ROOT, 'audio')
 
 @api_view(['POST'])
 def translate_text_view(request):
+    cleanup_directory(audio_files_directory)
     if request.method == 'POST':
         path = '/translate'
         constructed_url = endpoint_text + path
@@ -64,6 +65,7 @@ def translate_text_view(request):
 
 @api_view(['POST'])
 def speech_to_text_view(request):
+    cleanup_directory(audio_files_directory)
     audio_file = request.FILES.get("audio")
     target_language = request.data.get('target_language')
 
@@ -141,9 +143,6 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
         speech_recognizer.stop_continuous_recognition()
         full_transcription = " ".join(recognized_text)
 
-        cleanup_result = cleanup_directory(audio_files_directory)
-        print("Cleanup result:", cleanup_result)
-
         return Response({"status": "success", "transcription": full_transcription})
 
     except Exception as e:
@@ -153,10 +152,11 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
 
 @api_view(['POST'])
 def pronunciation_assesment_view(request):
-    import difflib
-    import json
+    cleanup_directory(audio_files_directory)
+    
     audio_file = request.FILES.get('audio')
     os.makedirs(audio_files_directory, exist_ok=True) 
+    
     audio_file_path = os.path.join(audio_files_directory, audio_file.name)
 
     speech_config = speechsdk.SpeechConfig(subscription=speech_services_key, region=speech_services_region)
@@ -204,7 +204,6 @@ def pronunciation_assesment_view(request):
         nb = jo["NBest"][0]
         durations.append(sum([int(w["Duration"]) for w in nb["Words"]]))
 
-    # Connect callbacks to the events fired by the speech recognizer
     speech_recognizer.recognized.connect(recognized)
     speech_recognizer.session_started.connect(lambda evt: print('SESSION STARTED: {}'.format(evt)))
     speech_recognizer.session_stopped.connect(lambda evt: print('SESSION STOPPED {}'.format(evt)))
