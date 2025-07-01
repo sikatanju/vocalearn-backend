@@ -1,6 +1,11 @@
 from pathlib import Path
 import os
 
+from environs import Env
+
+env = Env()
+env.read_env()
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -137,3 +142,11 @@ LOGGING = {
         },
     },
 }
+
+
+AZURE_TRANSLATE_KEY=env('AZURE_TRANSLATE_KEY', '')
+AZURE_SPEECH_KEY=env('AZURE_SPEECH_KEY', '')
+
+AZURE_TRANSLATE_API_ENDPOINT_TEXT=env('AZURE_TRANSLATE_API_ENDPOINT_TEXT', '')
+AZURE_TRANSLATE_API_ENDPOINT_DOCUMENT=env('AZURE_TRANSLATE_API_ENDPOINT_DOCUMENT', '')
+AZURE_SPEECH_ENDPOINT=env('AZURE_SPEECH_ENDPOINT', '')

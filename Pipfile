@@ -13,6 +13,7 @@ pydub = "*"
 ffmpeg-python = "*"
 jieba = "*"
 zhon = "*"
+environs = "*"
 
 [dev-packages]
 

@@ -1,3 +1,5 @@
+from django.conf import settings
+
 from rest_framework.response import Response
 from rest_framework.decorators import api_view
 from rest_framework import status
@@ -11,13 +13,13 @@ import azure.cognitiveservices.speech as speechsdk
 import requests, json, difflib
 import os, shutil, logging, time, string
 
-speech_services_endpoint = 'https://southeastasia.api.cognitive.microsoft.com/'
-speech_services_key = ''
+speech_services_endpoint = settings.AZURE_SPEECH_ENDPOINT
+speech_services_key = settings.AZURE_SPEECH_KEY
 speech_services_region = 'southeastasia'
 
-text_api_key=''
-endpoint_text='https://api.cognitive.microsofttranslator.com'
-endpoint_document='https://vocalearn-translator.cognitiveservices.azure.com'
+text_api_key=settings.AZURE_TRANSLATE_KEY
+endpoint_text=settings.AZURE_TRANSLATE_API_ENDPOINT_TEXT
+endpoint_document=settings.AZURE_TRANSLATE_API_ENDPOINT_DOCUMENT
 
 region='southeastasia'
 
