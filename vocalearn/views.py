@@ -124,7 +124,7 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
         done = False
 
         def stop_cb(evt: speechsdk.SessionEventArgs):
-            print("CLOSING on {}".format(evt))
+            # print("CLOSING on {}".format(evt))
             nonlocal done
             done = True
 
@@ -136,7 +136,7 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
         speech_recognizer.session_stopped.connect(stop_cb)
         speech_recognizer.canceled.connect(stop_cb)
 
-        print("Starting continuous recognition")
+        # print("Starting continuous recognition")
         speech_recognizer.start_continuous_recognition()
 
         while not done:
@@ -189,7 +189,7 @@ def pronunciation_assesment_view(request):
 
     def stop_cb(evt: speechsdk.SessionEventArgs):
         """callback that signals to stop continuous recognition upon receiving an event `evt`"""
-        print('CLOSING on {}'.format(evt))
+        # print('CLOSING on {}'.format(evt))
         nonlocal done
         done = True
 
@@ -297,7 +297,7 @@ def get_processed_audio_file_path(audio_file, audio_file_path, audio_files_direc
 def cleanup_directory(directory):
     try:
         if os.path.exists(directory):
-            print(directory)
+            # print(directory)
             shutil.rmtree(directory)
         
         os.makedirs(directory)

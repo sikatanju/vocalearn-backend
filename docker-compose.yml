@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+    web:
+        build: .
+        container_name: vocalearn-backend
+        ports:
+            - "8000:8000"
+        volumes:
+            - ./media:/app/media
+            - ./static:/app/static
+        environment:
+            - DEBUG=True
+            - DJANGO_SETTINGS_MODULE=vocalearn_backend.settings
+        env_file:
+            - .env
+        restart: unless-stopped
+
+volumes:
+    media_volume:
+    static_volume:

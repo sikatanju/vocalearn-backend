@@ -11,13 +11,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-*3ckhphq2599bbjtr-b3t^qkeoivt263@lg&(#!lej#0e!9h(a'
+SECRET_KEY = env('SECRET_KEY', '')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = bool(env("DEBUG", default=0))
 
-ALLOWED_HOSTS = []
-
+ALLOWED_HOSTS = env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", "localhost"])
+# print(env.list("DJANGO_ALLOWED_HOSTS", default=["127.0.0.1", 'localhost']))
 
 # Application definition
 
@@ -45,10 +45,7 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
-CORS_ORIGIN_WHITELIST = [
-    "http://localhost:5173",
-    "http://localhost:5174",
-]
+CORS_ORIGIN_WHITELIST = env.list('CORS_ALLOWED_ORIGINS', default=['http://localhost:5173/'])
 
 ROOT_URLCONF = 'vocalearn_backend.urls'
 
