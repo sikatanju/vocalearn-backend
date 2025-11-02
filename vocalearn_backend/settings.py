@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from datetime import timedelta
 
 from environs import Env
 
@@ -30,7 +31,10 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'rest_framework',
     'corsheaders',
+    'djoser',
+    
 
+    'core',
     'vocalearn',
 ]
 
@@ -147,3 +151,29 @@ AZURE_SPEECH_KEY=env('AZURE_SPEECH_KEY', '')
 AZURE_TRANSLATE_API_ENDPOINT_TEXT=env('AZURE_TRANSLATE_API_ENDPOINT_TEXT', '')
 AZURE_TRANSLATE_API_ENDPOINT_DOCUMENT=env('AZURE_TRANSLATE_API_ENDPOINT_DOCUMENT', '')
 AZURE_SPEECH_ENDPOINT=env('AZURE_SPEECH_ENDPOINT', '')
+
+
+DJOSER = {
+    'SERIALIZERS': {
+        'user_create': 'core.serializers.UserCreateSerializer',
+        'current_user': 'core.serializers.UserSerializer',
+    }
+}
+
+AUTH_USER_MODEL = 'core.User'
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': (
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    )
+}
+
+SIMPLE_JWT = {
+   'AUTH_HEADER_TYPES': ('JWT',),
+   'ACCESS_TOKEN_LIFETIME': timedelta(days=1)
+}
+
+AUTHENTICATION_BACKENDS = [
+    'core.auth_backends.EmailOrUsernameModelBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
