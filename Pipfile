@@ -17,6 +17,7 @@ environs = "*"
 gunicorn = "*"
 djoser = "*"
 djangorestframework-simplejwt = "*"
+cryptography = "*"
 
 [dev-packages]
 
