@@ -1,9 +1,10 @@
 from django.conf import settings
 
 from rest_framework.response import Response
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, permission_classes
+from rest_framework.permissions import AllowAny
 from rest_framework import status
-from django.conf import settings
+from .models import SavedItem
 
 from pydub import AudioSegment
 
@@ -28,41 +29,79 @@ logger = logging.getLogger(__name__)
 audio_files_directory = os.path.join(settings.MEDIA_ROOT, 'audio')
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def translate_text_view(request):
     cleanup_directory(audio_files_directory)
-    if request.method == 'POST':
-        path = '/translate'
-        constructed_url = endpoint_text + path
-        
-        text = request.data.get("text")
-        target_language = request.data.get("to")
-        
-        if not text or not target_language:
-                return Response({"error": "Both 'text' and 'to' fields are required."}, status=400)
     
-        headers = {
-            "Ocp-Apim-Subscription-Key": text_api_key,
-            "Ocp-Apim-Subscription-Region": 'global',
-            "Content-Type": "application/json"
-        }
+    path = '/translate'
+    constructed_url = endpoint_text + path
+    
+    text = request.data.get("text")
+    target_language = request.data.get("to")
+    source_language = request.data.get("from", "")
+    
+    if not text or not target_language:
+        return Response(
+            {"error": "Both 'text' and 'to' fields are required."}, 
+            status=400
+        )
 
-        body = [{"text": text}]
-        params = {"api-version": "3.0", "to": target_language}
+    headers = {
+        "Ocp-Apim-Subscription-Key": text_api_key,
+        "Ocp-Apim-Subscription-Region": 'global',
+        "Content-Type": "application/json"
+    }
 
-        try:
-            response = requests.post(constructed_url, headers=headers, json=body, params=params)
-            
-            if response.status_code == 200:
-                translation = response.json()[0]["translations"][0]["text"]
-                return Response({"translation": translation})
-            else:
-                return Response({"error": "Translation failed.", "details": response.json()}, status=response.status_code)
+    body = [{"text": text}]
+    params = {"api-version": "3.0", "to": target_language}
+    
+    # Add source language if provided
+    if source_language:
+        params["from"] = source_language
+
+    try:
+        response = requests.post(constructed_url, headers=headers, json=body, params=params)
         
-        except Exception as e:
-            return Response({"error": "An error occurred.", "details": str(e)}, status=500)
-
-    else:
-        return Response({"error": "Invalid request method. Use POST."}, status=405)
+        if response.status_code == 200:
+            translation_data = response.json()[0]
+            translation = translation_data["translations"][0]["text"]
+            detected_language = translation_data.get("detectedLanguage", {}).get("language", source_language)
+            
+            saved_item_id = None
+            
+            # Auto-save for authenticated users
+            if request.user.is_authenticated:
+                saved_item = SavedItem.objects.create(
+                    user=request.user,
+                    type='translation',
+                    content={
+                        "text": text,
+                        "translation": translation,
+                        "context": "",  # Can be added later by user
+                        "alternatives": []  # Can be populated if API provides alternatives
+                    },
+                    source_language=detected_language,
+                    target_language=target_language
+                )
+                saved_item_id = str(saved_item.id)
+            
+            return Response({
+                "translation": translation,
+                "detected_language": detected_language,
+                "saved_item_id": saved_item_id,  # null for unauthenticated users
+                "is_saved": saved_item_id is not None
+            })
+        else:
+            return Response(
+                {"error": "Translation failed.", "details": response.json()}, 
+                status=response.status_code
+            )
+    
+    except Exception as e:
+        return Response(
+            {"error": "An error occurred.", "details": str(e)}, 
+            status=500
+        )
 
 
 @api_view(['POST'])
