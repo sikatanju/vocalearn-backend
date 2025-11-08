@@ -1,10 +1,12 @@
 from django.conf import settings
+from django.db import models
 
 from rest_framework.response import Response
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework import status
-from .models import SavedItem
+
+from .models import Collection, CollectionItem, SavedItem
 
 from pydub import AudioSegment
 
@@ -343,3 +345,146 @@ def cleanup_directory(directory):
         return "Directory reset successfully."
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+@api_view(['POST'])
+def add_item_to_collection(request, item_id):
+    """Add a saved item to a collection"""
+    collection_id = request.data.get("collection_id")
+    
+    if not collection_id:
+        return Response({"error": "collection_id is required."}, status=400)
+    
+    try:
+        saved_item = SavedItem.objects.get(id=item_id, user=request.user)
+        collection = Collection.objects.get(id=collection_id, user=request.user)
+        
+        # Check if item already in collection
+        if CollectionItem.objects.filter(collection=collection, item=saved_item).exists():
+            return Response({"error": "Item already in this collection."}, status=400)
+        
+        # Get the next position
+        max_position = CollectionItem.objects.filter(
+            collection=collection
+        ).aggregate(models.Max('position'))['position__max']
+        
+        next_position = (max_position or 0) + 1
+        
+        # Add to collection
+        CollectionItem.objects.create(
+            collection=collection,
+            item=saved_item,
+            position=next_position
+        )
+        
+        # Update collection item count
+        collection.update_item_count()
+        
+        return Response({
+            "message": "Item added to collection successfully.",
+            "collection_id": str(collection.id),
+            "collection_name": collection.name
+        })
+    
+    except SavedItem.DoesNotExist:
+        return Response({"error": "Saved item not found."}, status=404)
+    except Collection.DoesNotExist:
+        return Response({"error": "Collection not found."}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['DELETE'])
+def remove_item_from_collection(request, item_id, collection_id):
+    """Remove a saved item from a collection"""
+    try:
+        saved_item = SavedItem.objects.get(id=item_id, user=request.user)
+        collection = Collection.objects.get(id=collection_id, user=request.user)
+        
+        collection_item = CollectionItem.objects.get(
+            collection=collection,
+            item=saved_item
+        )
+        collection_item.delete()
+        
+        # Update collection item count
+        collection.update_item_count()
+        
+        # Reorder remaining items
+        remaining_items = CollectionItem.objects.filter(
+            collection=collection
+        ).order_by('position')
+        
+        for idx, item in enumerate(remaining_items, start=1):
+            if item.position != idx:
+                item.position = idx
+                item.save(update_fields=['position'])
+        
+        return Response({
+            "message": "Item removed from collection successfully."
+        })
+    
+    except (SavedItem.DoesNotExist, Collection.DoesNotExist, CollectionItem.DoesNotExist):
+        return Response({"error": "Item or collection not found."}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+def get_saved_items(request):
+    """Get all saved items for authenticated user with optional filtering"""
+    item_type = request.query_params.get('type')  # translation, speech_to_text, pronunciation
+    search_query = request.query_params.get('search')
+    
+    items = SavedItem.objects.filter(user=request.user)
+    
+    if item_type:
+        items = items.filter(type=item_type)
+    
+    if search_query:
+        items = items.filter(
+            models.Q(content__text__icontains=search_query) |
+            models.Q(content__translation__icontains=search_query) |
+            models.Q(content__transcription__icontains=search_query)
+        )
+    
+    items_data = [
+        {
+            "id": str(item.id),
+            "type": item.type,
+            "content": item.content,
+            "source_language": item.source_language,
+            "target_language": item.target_language,
+            "created_at": item.created_at,
+            "collections": [
+                {
+                    "id": str(ci.collection.id),
+                    "name": ci.collection.name
+                }
+                for ci in item.in_collections.select_related('collection')
+            ]
+        }
+        for item in items
+    ]
+    
+    return Response({
+        "count": len(items_data),
+        "items": items_data
+    })
+
+
+@api_view(['DELETE'])
+def delete_saved_item(request, item_id):
+    """Delete a saved item"""
+    try:
+        saved_item = SavedItem.objects.get(id=item_id, user=request.user)
+        saved_item.delete()
+        
+        return Response({
+            "message": "Item deleted successfully."
+        })
+    
+    except SavedItem.DoesNotExist:
+        return Response({"error": "Saved item not found."}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)

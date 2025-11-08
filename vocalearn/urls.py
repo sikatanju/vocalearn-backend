@@ -8,6 +8,14 @@ urlpatterns = [
     path("translate/", views.translate_text_view, name='translate_text'),
     path("speech/", views.speech_to_text_view, name="speech-to-text"),
     path('pronunciation/', views.pronunciation_assesment_view, name='pronunciation-assesment'),
+    
+    # Saved items management
+    path('saved-items/', views.get_saved_items, name='get_saved_items'),
+    path('saved-items/<uuid:item_id>/', views.delete_saved_item, name='delete_saved_item'),
+    
+    # Collections management
+    path('saved-items/<uuid:item_id>/collections/', views.add_item_to_collection, name='add_item_to_collection'),
+    path('saved-items/<uuid:item_id>/collections/<uuid:collection_id>/', views.remove_item_from_collection, name='remove_item_from_collection'),
 ]
 
 if settings.DEBUG:
