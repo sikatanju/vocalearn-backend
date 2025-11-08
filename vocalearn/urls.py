@@ -11,7 +11,7 @@ urlpatterns = [
     
     # Saved items management
     path('saved-items/', views.get_saved_items, name='get_saved_items'),
-    path('saved-items/<uuid:item_id>/', views.delete_saved_item, name='delete_saved_item'),
+    path('saved-items/delete/<uuid:item_id>/', views.delete_saved_item, name='delete_saved_item'),
     
     # Collections management
     path('saved-items/<uuid:item_id>/collections/', views.add_item_to_collection, name='add_item_to_collection'),
