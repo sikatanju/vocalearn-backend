@@ -2,6 +2,7 @@ asgiref==3.10.0
 azure-ai-translation-text==1.0.1
 azure-cognitiveservices-speech==1.46.0
 azure-core==1.36.0
+azure-storage-blob==12.27.1
 backports-datetime-fromisoformat==2.0.3
 certifi==2025.10.5
 cffi==2.0.0

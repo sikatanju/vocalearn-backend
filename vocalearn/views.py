@@ -12,9 +12,11 @@ from pydub import AudioSegment
 
 from azure.cognitiveservices.speech import SpeechConfig, AudioConfig, SpeechRecognizer, ResultReason
 import azure.cognitiveservices.speech as speechsdk
+from azure.storage.blob import BlobServiceClient, ContentSettings
 
 import requests, json, difflib
 import os, shutil, logging, time, string
+from datetime import datetime
 
 speech_services_endpoint = settings.AZURE_SPEECH_ENDPOINT
 speech_services_key = settings.AZURE_SPEECH_KEY
@@ -107,6 +109,7 @@ def translate_text_view(request):
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def speech_to_text_view(request):
     cleanup_directory(audio_files_directory)
     audio_file = request.FILES.get("audio")
@@ -115,13 +118,10 @@ def speech_to_text_view(request):
     if not audio_file:
         return Response({"error": "No audio file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
 
-    if not audio_file:
-        return Response({"error": "No audio file uploaded."}, status=status.HTTP_400_BAD_REQUEST)
-
     os.makedirs(audio_files_directory, exist_ok=True) 
     audio_file_path = os.path.join(audio_files_directory, audio_file.name)
 
-    return get_continuous_transcription(audio_file, audio_file_path, audio_files_directory, target_language)
+    return get_continuous_transcription(audio_file, audio_file_path, audio_files_directory, target_language, request)
     
     
 def get_transcribed_text(audio_file, audio_file_path, audio_files_directory, target_language):
@@ -149,16 +149,22 @@ def get_transcribed_text(audio_file, audio_file_path, audio_files_directory, tar
         return Response({"error": f"Error processing the audio file: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-def get_continuous_transcription(audio_file, audio_file_path, audio_files_directory, target_language):
+def get_continuous_transcription(audio_file, audio_file_path, audio_files_directory, target_language, request=None):
+    processed_audio_path = None
+    audio_url = None
+    
     try:
+        # Get processed audio file path
+        processed_audio_path = get_processed_audio_file_path(
+            audio_file, audio_file_path, audio_files_directory
+        )
+        
         speech_config = speechsdk.SpeechConfig(
             subscription=speech_services_key,
             region=region,
             speech_recognition_language=target_language,
         )
-        audio_config = speechsdk.audio.AudioConfig(filename=get_processed_audio_file_path(
-            audio_file, audio_file_path, audio_files_directory)
-        )
+        audio_config = speechsdk.audio.AudioConfig(filename=processed_audio_path)
         speech_recognizer = speechsdk.SpeechRecognizer(speech_config=speech_config, audio_config=audio_config)
 
         recognized_text = []
@@ -185,8 +191,39 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
 
         speech_recognizer.stop_continuous_recognition()
         full_transcription = " ".join(recognized_text)
-
-        return Response({"status": "success", "transcription": full_transcription})
+        
+        saved_item_id = None
+        
+        # Auto-save for authenticated users
+        if request and request.user.is_authenticated:
+            # Upload audio to Azure Blob Storage
+            audio_url = upload_audio_to_azure_storage(
+                processed_audio_path, 
+                request.user.id, 
+                'speech_to_text'
+            )
+            
+            # Create saved item
+            saved_item = SavedItem.objects.create(
+                user=request.user,
+                type='speech_to_text',
+                content={
+                    "transcription": full_transcription,
+                    "original_filename": audio_file.name,
+                    "duration": None,  # Can be calculated from audio file if needed
+                },
+                target_language=target_language,
+                audio_url=audio_url or ""
+            )
+            saved_item_id = str(saved_item.id)
+        
+        return Response({
+            "status": "success", 
+            "transcription": full_transcription,
+            "saved_item_id": saved_item_id,
+            "is_saved": saved_item_id is not None,
+            "audio_url": audio_url
+        })
 
     except Exception as e:
         logger.error(f"Error during continuous recognition: {e}", exc_info=True)
@@ -194,6 +231,7 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
 
 
 @api_view(['POST'])
+@permission_classes([AllowAny])
 def pronunciation_assesment_view(request):
     cleanup_directory(audio_files_directory)
     
@@ -201,9 +239,13 @@ def pronunciation_assesment_view(request):
     os.makedirs(audio_files_directory, exist_ok=True) 
     
     audio_file_path = os.path.join(audio_files_directory, audio_file.name)
+    processed_audio_path = None
+    audio_url = None
+    
+    processed_audio_path = get_processed_audio_file_path(audio_file, audio_file_path, audio_files_directory)
 
     speech_config = speechsdk.SpeechConfig(subscription=speech_services_key, region=speech_services_region)
-    audio_config = speechsdk.audio.AudioConfig(filename=get_processed_audio_file_path(audio_file, audio_file_path, audio_files_directory))
+    audio_config = speechsdk.audio.AudioConfig(filename=processed_audio_path)
 
     reference_text = request.data.get('reference_text')
     enable_miscue = True
@@ -312,9 +354,53 @@ def pronunciation_assesment_view(request):
 
     if not audio_file or not target_language or not reference_text:
         return Response({"error": "Something is missing"}, status=status.HTTP_400_BAD_REQUEST)
-    else:
-        return Response({"status": "success", "accuracyScore": accuracy_score, "prosodyScore": prosody_score,
-                          "completenessScore": completeness_score, "fluency_score": fluency_score}, status=status.HTTP_200_OK)
+    
+    saved_item_id = None
+    
+    # Auto-save for authenticated users
+    if request.user.is_authenticated:
+        # Upload audio to Azure Blob Storage
+        audio_url = upload_audio_to_azure_storage(
+            processed_audio_path, 
+            request.user.id, 
+            'pronunciation'
+        )
+        
+        # Create saved item with pronunciation assessment results
+        saved_item = SavedItem.objects.create(
+            user=request.user,
+            type='pronunciation',
+            content={
+                "reference_text": reference_text,
+                "accuracy_score": float(accuracy_score),
+                "prosody_score": float(prosody_score) if prosody_score != "nan" else None,
+                "completeness_score": float(completeness_score),
+                "fluency_score": float(fluency_score),
+                "original_filename": audio_file.name,
+                "words": [
+                    {
+                        "word": w.word,
+                        "accuracy_score": w.accuracy_score,
+                        "error_type": w.error_type
+                    } 
+                    for w in final_words
+                ]
+            },
+            target_language=target_language,
+            audio_url=audio_url or ""
+        )
+        saved_item_id = str(saved_item.id)
+    
+    return Response({
+        "status": "success", 
+        "accuracyScore": accuracy_score, 
+        "prosodyScore": prosody_score,
+        "completenessScore": completeness_score, 
+        "fluency_score": fluency_score,
+        "saved_item_id": saved_item_id,
+        "is_saved": saved_item_id is not None,
+        "audio_url": audio_url
+    }, status=status.HTTP_200_OK)
     
 
 
@@ -345,6 +431,69 @@ def cleanup_directory(directory):
         return "Directory reset successfully."
     except Exception as e:
         return f"Error: {str(e)}"
+
+
+def upload_audio_to_azure_storage(file_path, user_id, file_type='audio'):
+    """
+    Upload audio file to Azure Blob Storage and return the public URL
+    
+    Args:
+        file_path: Local path to the audio file
+        user_id: User ID for organizing files
+        file_type: Type of file (audio, processed_audio, etc.)
+    
+    Returns:
+        str: Public URL of the uploaded file or None if failed
+    """
+    try:
+        # Get connection string and container name from settings
+        connection_string = settings.AZURE_STORAGE_CONNECTION_STRING
+        container_name = settings.AZURE_STORAGE_CONTAINER_NAME
+        
+        if not connection_string:
+            logger.error("Azure Storage connection string not configured")
+            return None
+        
+        # Create blob service client
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        
+        # Create container if it doesn't exist
+        try:
+            container_client = blob_service_client.get_container_client(container_name)
+            if not container_client.exists():
+                container_client = blob_service_client.create_container(container_name)
+        except Exception as e:
+            logger.warning(f"Container might already exist: {e}")
+            container_client = blob_service_client.get_container_client(container_name)
+        
+        # Generate unique blob name with timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        file_extension = os.path.splitext(file_path)[1]
+        blob_name = f"users/{user_id}/{file_type}/{timestamp}_{os.path.basename(file_path)}"
+        
+        # Get blob client
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, 
+            blob=blob_name
+        )
+        
+        # Upload file with content type
+        with open(file_path, "rb") as data:
+            content_settings = ContentSettings(content_type='audio/wav')
+            blob_client.upload_blob(
+                data, 
+                overwrite=True,
+                content_settings=content_settings
+            )
+        
+        # Return the blob URL
+        blob_url = blob_client.url
+        logger.info(f"Audio file uploaded successfully to: {blob_url}")
+        return blob_url
+        
+    except Exception as e:
+        logger.error(f"Error uploading audio to Azure Storage: {e}", exc_info=True)
+        return None
 
 
 @api_view(['POST'])
