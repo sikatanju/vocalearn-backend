@@ -6,7 +6,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework import status
 
-from .models import Collection, CollectionItem, SavedItem
+from .models import Collection, CollectionItem, SavedItem, UserStorageQuota
 
 from pydub import AudioSegment
 
@@ -193,36 +193,79 @@ def get_continuous_transcription(audio_file, audio_file_path, audio_files_direct
         full_transcription = " ".join(recognized_text)
         
         saved_item_id = None
+        file_size_bytes = 0
+        quota_info = None
         
         # Auto-save for authenticated users
         if request and request.user.is_authenticated:
+            # Get user quota
+            quota = get_or_create_user_quota(request.user)
+            
+            # Get file size before checking quota
+            file_size_bytes = os.path.getsize(processed_audio_path)
+            
+            # Check if user can upload
+            if not quota.can_upload(file_size_bytes):
+                quota_info = {
+                    "used_mb": round(quota.used_mb, 2),
+                    "quota_mb": round(quota.quota_mb, 2),
+                    "remaining_mb": round(quota.remaining_mb, 2),
+                    "file_count": quota.audio_file_count,
+                    "max_files": quota.max_audio_files
+                }
+                return Response({
+                    "status": "success", 
+                    "transcription": full_transcription,
+                    "saved_item_id": None,
+                    "is_saved": False,
+                    "audio_url": None,
+                    "quota_exceeded": True,
+                    "quota_info": quota_info,
+                    "message": "Storage quota exceeded. Unable to save audio file."
+                })
+            
             # Upload audio to Azure Blob Storage
-            audio_url = upload_audio_to_azure_storage(
+            audio_url, uploaded_size = upload_audio_to_azure_storage(
                 processed_audio_path, 
                 request.user.id, 
                 'speech_to_text'
             )
             
-            # Create saved item
-            saved_item = SavedItem.objects.create(
-                user=request.user,
-                type='speech_to_text',
-                content={
-                    "transcription": full_transcription,
-                    "original_filename": audio_file.name,
-                    "duration": None,  # Can be calculated from audio file if needed
-                },
-                target_language=target_language,
-                audio_url=audio_url or ""
-            )
-            saved_item_id = str(saved_item.id)
+            if audio_url:
+                # Create saved item
+                saved_item = SavedItem.objects.create(
+                    user=request.user,
+                    type='speech_to_text',
+                    content={
+                        "transcription": full_transcription,
+                        "original_filename": audio_file.name,
+                        "duration": None,  # Can be calculated from audio file if needed
+                    },
+                    target_language=target_language,
+                    audio_url=audio_url,
+                    audio_size_bytes=uploaded_size
+                )
+                saved_item_id = str(saved_item.id)
+                
+                # Update user quota
+                quota.add_file(uploaded_size)
+                
+                quota_info = {
+                    "used_mb": round(quota.used_mb, 2),
+                    "quota_mb": round(quota.quota_mb, 2),
+                    "remaining_mb": round(quota.remaining_mb, 2),
+                    "usage_percentage": round(quota.usage_percentage, 2),
+                    "file_count": quota.audio_file_count,
+                    "max_files": quota.max_audio_files
+                }
         
         return Response({
             "status": "success", 
             "transcription": full_transcription,
             "saved_item_id": saved_item_id,
             "is_saved": saved_item_id is not None,
-            "audio_url": audio_url
+            "audio_url": audio_url,
+            "quota_info": quota_info
         })
 
     except Exception as e:
@@ -356,40 +399,84 @@ def pronunciation_assesment_view(request):
         return Response({"error": "Something is missing"}, status=status.HTTP_400_BAD_REQUEST)
     
     saved_item_id = None
+    quota_info = None
     
     # Auto-save for authenticated users
     if request.user.is_authenticated:
+        # Get user quota
+        quota = get_or_create_user_quota(request.user)
+        
+        # Get file size before checking quota
+        file_size_bytes = os.path.getsize(processed_audio_path)
+        
+        # Check if user can upload
+        if not quota.can_upload(file_size_bytes):
+            quota_info = {
+                "used_mb": round(quota.used_mb, 2),
+                "quota_mb": round(quota.quota_mb, 2),
+                "remaining_mb": round(quota.remaining_mb, 2),
+                "file_count": quota.audio_file_count,
+                "max_files": quota.max_audio_files
+            }
+            return Response({
+                "status": "success", 
+                "accuracyScore": accuracy_score, 
+                "prosodyScore": prosody_score,
+                "completenessScore": completeness_score, 
+                "fluency_score": fluency_score,
+                "saved_item_id": None,
+                "is_saved": False,
+                "audio_url": None,
+                "quota_exceeded": True,
+                "quota_info": quota_info,
+                "message": "Storage quota exceeded. Unable to save audio file."
+            }, status=status.HTTP_200_OK)
+        
         # Upload audio to Azure Blob Storage
-        audio_url = upload_audio_to_azure_storage(
+        audio_url, uploaded_size = upload_audio_to_azure_storage(
             processed_audio_path, 
             request.user.id, 
             'pronunciation'
         )
         
-        # Create saved item with pronunciation assessment results
-        saved_item = SavedItem.objects.create(
-            user=request.user,
-            type='pronunciation',
-            content={
-                "reference_text": reference_text,
-                "accuracy_score": float(accuracy_score),
-                "prosody_score": float(prosody_score) if prosody_score != "nan" else None,
-                "completeness_score": float(completeness_score),
-                "fluency_score": float(fluency_score),
-                "original_filename": audio_file.name,
-                "words": [
-                    {
-                        "word": w.word,
-                        "accuracy_score": w.accuracy_score,
-                        "error_type": w.error_type
-                    } 
-                    for w in final_words
-                ]
-            },
-            target_language=target_language,
-            audio_url=audio_url or ""
-        )
-        saved_item_id = str(saved_item.id)
+        if audio_url:
+            # Create saved item with pronunciation assessment results
+            saved_item = SavedItem.objects.create(
+                user=request.user,
+                type='pronunciation',
+                content={
+                    "reference_text": reference_text,
+                    "accuracy_score": float(accuracy_score),
+                    "prosody_score": float(prosody_score) if prosody_score != "nan" else None,
+                    "completeness_score": float(completeness_score),
+                    "fluency_score": float(fluency_score),
+                    "original_filename": audio_file.name,
+                    "words": [
+                        {
+                            "word": w.word,
+                            "accuracy_score": w.accuracy_score,
+                            "error_type": w.error_type
+                        } 
+                        for w in final_words
+                    ]
+                },
+                target_language=target_language,
+                audio_url=audio_url,
+                audio_size_bytes=uploaded_size
+            )
+            saved_item_id = str(saved_item.id)
+            
+            # Update user quota
+            quota.add_file(uploaded_size)
+            
+            quota_info = {
+                "used_mb": round(quota.used_mb, 2),
+                "quota_mb": round(quota.quota_mb, 2),
+                "remaining_mb": round(quota.remaining_mb, 2),
+                "usage_percentage": round(quota.usage_percentage, 2),
+                "file_count": quota.audio_file_count,
+                "max_files": quota.max_audio_files
+            }
     
     return Response({
         "status": "success", 
@@ -399,7 +486,8 @@ def pronunciation_assesment_view(request):
         "fluency_score": fluency_score,
         "saved_item_id": saved_item_id,
         "is_saved": saved_item_id is not None,
-        "audio_url": audio_url
+        "audio_url": audio_url,
+        "quota_info": quota_info
     }, status=status.HTTP_200_OK)
     
 
@@ -435,7 +523,7 @@ def cleanup_directory(directory):
 
 def upload_audio_to_azure_storage(file_path, user_id, file_type='audio'):
     """
-    Upload audio file to Azure Blob Storage and return the public URL
+    Upload audio file to Azure Blob Storage and return the public URL and file size
     
     Args:
         file_path: Local path to the audio file
@@ -443,7 +531,7 @@ def upload_audio_to_azure_storage(file_path, user_id, file_type='audio'):
         file_type: Type of file (audio, processed_audio, etc.)
     
     Returns:
-        str: Public URL of the uploaded file or None if failed
+        tuple: (blob_url, file_size_bytes) or (None, 0) if failed
     """
     try:
         # Get connection string and container name from settings
@@ -452,7 +540,10 @@ def upload_audio_to_azure_storage(file_path, user_id, file_type='audio'):
         
         if not connection_string:
             logger.error("Azure Storage connection string not configured")
-            return None
+            return None, 0
+        
+        # Get file size before upload
+        file_size_bytes = os.path.getsize(file_path)
         
         # Create blob service client
         blob_service_client = BlobServiceClient.from_connection_string(connection_string)
@@ -486,14 +577,26 @@ def upload_audio_to_azure_storage(file_path, user_id, file_type='audio'):
                 content_settings=content_settings
             )
         
-        # Return the blob URL
+        # Return the blob URL and file size
         blob_url = blob_client.url
-        logger.info(f"Audio file uploaded successfully to: {blob_url}")
-        return blob_url
+        logger.info(f"Audio file uploaded successfully to: {blob_url} (Size: {file_size_bytes} bytes)")
+        return blob_url, file_size_bytes
         
     except Exception as e:
         logger.error(f"Error uploading audio to Azure Storage: {e}", exc_info=True)
-        return None
+        return None, 0
+
+
+def get_or_create_user_quota(user):
+    """Get or create user storage quota"""
+    quota, created = UserStorageQuota.objects.get_or_create(
+        user=user,
+        defaults={
+            'quota_bytes': 104857600,  # 100MB default
+            'max_audio_files': 50
+        }
+    )
+    return quota
 
 
 @api_view(['POST'])
@@ -624,9 +727,18 @@ def get_saved_items(request):
 
 @api_view(['DELETE'])
 def delete_saved_item(request, item_id):
-    """Delete a saved item"""
+    """Delete a saved item and free up storage quota"""
     try:
         saved_item = SavedItem.objects.get(id=item_id, user=request.user)
+        
+        # If item has audio, update quota
+        if saved_item.audio_url and saved_item.audio_size_bytes > 0:
+            quota = get_or_create_user_quota(request.user)
+            quota.remove_file(saved_item.audio_size_bytes)
+            
+            # Optionally delete from Azure Blob Storage
+            # delete_audio_from_azure_storage(saved_item.audio_url)
+        
         saved_item.delete()
         
         return Response({
@@ -637,3 +749,19 @@ def delete_saved_item(request, item_id):
         return Response({"error": "Saved item not found."}, status=404)
     except Exception as e:
         return Response({"error": str(e)}, status=500)
+
+
+@api_view(['GET'])
+def get_user_quota(request):
+    """Get user's current storage quota information"""
+    quota = get_or_create_user_quota(request.user)
+    
+    return Response({
+        "used_mb": round(quota.used_mb, 2),
+        "quota_mb": round(quota.quota_mb, 2),
+        "remaining_mb": round(quota.remaining_mb, 2),
+        "usage_percentage": round(quota.usage_percentage, 2),
+        "audio_file_count": quota.audio_file_count,
+        "max_audio_files": quota.max_audio_files,
+        "can_upload_more": quota.audio_file_count < quota.max_audio_files and quota.remaining_mb > 0
+    })

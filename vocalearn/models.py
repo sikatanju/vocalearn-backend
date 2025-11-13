@@ -37,6 +37,7 @@ class SavedItem(models.Model):
     
     # Audio reference
     audio_url = models.TextField(blank=True, help_text="S3/storage reference for audio files")
+    audio_size_bytes = models.BigIntegerField(default=0, help_text="Size of audio file in bytes")
     
     # SRS (Spaced Repetition System) fields
     ease_factor = models.DecimalField(
@@ -207,3 +208,76 @@ class ItemReview(models.Model):
     
     def __str__(self):
         return f"Review: {self.item.id} - Q{self.quality} - {self.reviewed_at.date()}"
+    
+
+class UserStorageQuota(models.Model):
+    """Track user's audio storage usage with both size and count limits"""
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='storage_quota')
+    
+    # Storage-based limits (in bytes)
+    used_bytes = models.BigIntegerField(default=0, help_text="Total bytes used by user")
+    quota_bytes = models.BigIntegerField(default=104857600, help_text="Storage quota in bytes (default 100MB)")
+    
+    # Count-based limits
+    audio_file_count = models.PositiveSmallIntegerField(default=0)
+    max_audio_files = models.PositiveSmallIntegerField(default=50, help_text="Maximum number of audio files")
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        db_table = 'user_storage_quota'
+        indexes = [
+            models.Index(fields=['user'], name='idx_storage_user'),
+        ]
+    
+    def __str__(self):
+        return f"{self.user.username} - {self.used_mb:.2f}MB / {self.quota_mb}MB"
+    
+    @property
+    def used_mb(self):
+        """Convert bytes to MB for display"""
+        return self.used_bytes / (1024 * 1024)
+    
+    @property
+    def quota_mb(self):
+        """Convert quota bytes to MB for display"""
+        return self.quota_bytes / (1024 * 1024)
+    
+    @property
+    def remaining_bytes(self):
+        """Calculate remaining storage"""
+        return max(0, self.quota_bytes - self.used_bytes)
+    
+    @property
+    def remaining_mb(self):
+        """Remaining storage in MB"""
+        return self.remaining_bytes / (1024 * 1024)
+    
+    @property
+    def usage_percentage(self):
+        """Calculate usage percentage"""
+        if self.quota_bytes == 0:
+            return 0
+        return (self.used_bytes / self.quota_bytes) * 100
+    
+    def can_upload(self, file_size_bytes):
+        """Check if user can upload a file of given size"""
+        space_available = self.remaining_bytes >= file_size_bytes
+        count_available = self.audio_file_count < self.max_audio_files
+        return space_available and count_available
+    
+    def add_file(self, file_size_bytes):
+        """Add a file to user's usage"""
+        self.used_bytes += file_size_bytes
+        self.audio_file_count += 1
+        self.save(update_fields=['used_bytes', 'audio_file_count', 'updated_at'])
+    
+    def remove_file(self, file_size_bytes):
+        """Remove a file from user's usage"""
+        self.used_bytes = max(0, self.used_bytes - file_size_bytes)
+        self.audio_file_count = max(0, self.audio_file_count - 1)
+        self.save(update_fields=['used_bytes', 'audio_file_count', 'updated_at'])
