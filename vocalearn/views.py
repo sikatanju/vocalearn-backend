@@ -812,6 +812,64 @@ def get_user_quota(request):
     })
 
 
+@api_view(['GET'])
+def download_audio(request, item_id):
+    """Download audio file from Azure Blob Storage for a saved item"""
+    try:
+        saved_item = SavedItem.objects.get(id=item_id, user=request.user)
+        
+        if not saved_item.audio_url:
+            return Response({"error": "No audio file associated with this item."}, status=404)
+        
+        try:
+            connection_string = settings.AZURE_STORAGE_CONNECTION_STRING
+            container_name = settings.AZURE_STORAGE_CONTAINER_NAME
+            
+            if not connection_string:
+                return Response({"error": "Storage configuration error."}, status=500)
+            
+            # Extract blob name from URL
+            blob_name = saved_item.audio_url.split(f"/{container_name}/")[-1].split("?")[0]
+            
+            # Create blob service client
+            blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+            blob_client = blob_service_client.get_blob_client(
+                container=container_name,
+                blob=blob_name
+            )
+            
+            # Check if blob exists
+            if not blob_client.exists():
+                return Response({"error": "Audio file not found in storage."}, status=404)
+            
+            # Get blob properties for filename
+            blob_properties = blob_client.get_blob_properties()
+            
+            # Download blob data
+            blob_data = blob_client.download_blob()
+            audio_content = blob_data.readall()
+            
+            # Extract original filename from content or use a default
+            original_filename = saved_item.content.get('original_filename', 'audio.wav')
+            
+            # Create HTTP response with audio file
+            from django.http import HttpResponse
+            response = HttpResponse(audio_content, content_type='audio/wav')
+            response['Content-Disposition'] = f'attachment; filename="{original_filename}"'
+            response['Content-Length'] = len(audio_content)
+            
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error downloading audio from Azure Storage: {e}", exc_info=True)
+            return Response({"error": "Failed to download audio file."}, status=500)
+    
+    except SavedItem.DoesNotExist:
+        return Response({"error": "Saved item not found."}, status=404)
+    except Exception as e:
+        return Response({"error": str(e)}, status=500)
+
+
 def get_or_create_user_quota(user):
     """Get or create user storage quota"""
     quota, created = UserStorageQuota.objects.get_or_create(
