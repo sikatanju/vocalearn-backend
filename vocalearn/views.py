@@ -12,7 +12,7 @@ from pydub import AudioSegment
 
 from azure.cognitiveservices.speech import SpeechConfig, AudioConfig, SpeechRecognizer, ResultReason
 import azure.cognitiveservices.speech as speechsdk
-from azure.storage.blob import BlobServiceClient, ContentSettings
+from azure.storage.blob import BlobServiceClient, ContentSettings, BlobClient
 
 import requests, json, difflib
 import os, shutil, logging, time, string
@@ -491,7 +491,6 @@ def pronunciation_assesment_view(request):
     }, status=status.HTTP_200_OK)
     
 
-
 def get_processed_audio_file_path(audio_file, audio_file_path, audio_files_directory):
     try:
         with open(audio_file_path, "wb") as f:
@@ -587,16 +586,61 @@ def upload_audio_to_azure_storage(file_path, user_id, file_type='audio'):
         return None, 0
 
 
-def get_or_create_user_quota(user):
-    """Get or create user storage quota"""
-    quota, created = UserStorageQuota.objects.get_or_create(
-        user=user,
-        defaults={
-            'quota_bytes': 104857600,  # 100MB default
-            'max_audio_files': 50
-        }
-    )
-    return quota
+def delete_audio_from_azure_storage(blob_url):
+    """
+    Delete an uploaded audio file from Azure Blob Storage
+    
+    Args:
+        blob_url: Full URL to the blob file in Azure Storage
+    
+    Returns:
+        bool: True if successful, False if failed
+    """
+    try:
+        connection_string = settings.AZURE_STORAGE_CONNECTION_STRING
+        container_name = settings.AZURE_STORAGE_CONTAINER_NAME
+
+        if not connection_string:
+            logger.error("Azure Storage connection string not configured")
+            return False
+        
+        if not blob_url:
+            logger.warning("No blob URL provided for deletion")
+            return False
+        
+        # URL format: https://<account>.blob.core.windows.net/<container>/<blob_name>
+        try:
+            # Parse the blob name from the URL
+            blob_name = blob_url.split(f"/{container_name}/")[-1]
+            
+            # Remove any query parameters if present
+            blob_name = blob_name.split("?")[0]
+            
+        except Exception as e:
+            logger.error(f"Error parsing blob URL: {e}")
+            return False
+        
+        # Create blob service client
+        blob_service_client = BlobServiceClient.from_connection_string(connection_string)
+        
+        # Get blob client
+        blob_client = blob_service_client.get_blob_client(
+            container=container_name, 
+            blob=blob_name
+        )
+        
+        # Check if blob exists before attempting deletion
+        if blob_client.exists():
+            blob_client.delete_blob()
+            logger.info(f"Successfully deleted blob: {blob_name}")
+            return True
+        else:
+            logger.warning(f"Blob not found for deletion: {blob_name}")
+            return False
+    
+    except Exception as e:
+        logger.error(f"Error deleting audio from Azure Storage: {e}", exc_info=True)
+        return False
 
 
 @api_view(['POST'])
@@ -708,6 +752,7 @@ def get_saved_items(request):
             "source_language": item.source_language,
             "target_language": item.target_language,
             "created_at": item.created_at,
+            "audio_url": item.audio_url,
             "collections": [
                 {
                     "id": str(ci.collection.id),
@@ -736,8 +781,8 @@ def delete_saved_item(request, item_id):
             quota = get_or_create_user_quota(request.user)
             quota.remove_file(saved_item.audio_size_bytes)
             
-            # Optionally delete from Azure Blob Storage
-            # delete_audio_from_azure_storage(saved_item.audio_url)
+            # Delete from Azure Blob Storage
+            delete_audio_from_azure_storage(saved_item.audio_url)
         
         saved_item.delete()
         
@@ -765,3 +810,15 @@ def get_user_quota(request):
         "max_audio_files": quota.max_audio_files,
         "can_upload_more": quota.audio_file_count < quota.max_audio_files and quota.remaining_mb > 0
     })
+
+
+def get_or_create_user_quota(user):
+    """Get or create user storage quota"""
+    quota, created = UserStorageQuota.objects.get_or_create(
+        user=user,
+        defaults={
+            'quota_bytes': 104857600,  # 100MB default
+            'max_audio_files': 50
+        }
+    )
+    return quota
